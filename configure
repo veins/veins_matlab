@@ -1,0 +1,98 @@
+#!/usr/bin/env python2
+
+"""
+Creates Makefile(s) for building this project.
+"""
+
+import os
+import sys
+import subprocess
+from logging import info, warning, error
+from optparse import OptionParser
+
+
+if sys.version_info[0] == 3:
+    warning("Warning: running configure with python3 might result in subtle errors.")
+
+# Option handling
+parser = OptionParser()
+parser.add_option("--with-veins", dest="veins", help="link with a version of Veins installed in PATH", metavar="PATH", default="../veins")
+parser.add_option("--with-matlab", dest="matlab", help="link with a version of MATLAB installed in PATH", metavar="PATH", default="../matlab")
+(options, args) = parser.parse_args()
+
+if args:
+    warning("Superfluous command line arguments: \"%s\"" % " ".join(args))
+
+
+# Start with default flags
+makemake_flags = ['-f', '--deep', '--no-deep-includes', '--make-so', '-I', '.', '-o', 'veins_matlab', '-O', 'out', '-p', 'VEINS_MATLAB']
+run_libs = [os.path.join('src', 'veins_matlab')]
+run_neds = [os.path.join('src', 'veins_matlab')]
+run_imgs = [os.path.join('images')]
+
+
+# Add flags for Veins
+if options.veins:
+    check_fname = os.path.join(options.veins, 'src/veins/package.ned')
+    expect_version = '5'
+    if not os.path.isfile(check_fname):
+        error('Could not find Veins (by looking for %s). Check the path to Veins (--with-veins=... option) and the Veins version (should be version %s)' % (check_fname, expect_version))
+        sys.exit(1)
+
+    veins_header_dirs = [os.path.join(os.path.relpath(options.veins, 'src'), 'src')]
+    veins_includes = ['-I' + s for s in veins_header_dirs]
+    veins_link = ["-L" + os.path.join(os.path.relpath(options.veins, 'src'), 'src'), "-lveins$(D)"]
+    veins_defs = []
+
+    makemake_flags += veins_includes + veins_link + veins_defs
+    run_libs = [os.path.relpath(os.path.join(options.veins, 'src', 'veins'))] + run_libs
+    run_neds = [os.path.relpath(os.path.join(options.veins, 'src', 'veins'))] + run_neds
+    run_imgs = [os.path.relpath(os.path.join(options.veins, 'images'))] + run_imgs
+
+
+# Add flags for MATLAB
+if options.matlab:
+    check_fname = os.path.join(options.matlab, 'VersionInfo.xml')
+    expect_version = 'R2019a'
+    if not os.path.isfile(check_fname):
+        error('Could not find MATLAB (by looking for %s). Check the path to MATLAB (--with-matlab=... option) and the Veins version (should be version %s)' % (check_fname, expect_version))
+        sys.exit(1)
+    with open(check_fname) as f:
+        s = f.read()
+        if not expect_version in s:
+            error('Unsupported MATLAB version (could not find {} in VersionInfo.xml)!'.format(expect_version))
+            sys.exit(1)
+
+    matlab_includes = ["-I" + os.path.join(os.path.relpath(options.matlab, 'src'), 'extern', 'include')]
+    matlab_extern = None
+    archs = ['glnxa64', 'maci64', 'win64']
+    basepath = os.path.join(os.path.relpath(options.matlab, 'src'), 'extern', 'bin')
+    for ss in archs:
+        s = os.path.join(basepath, ss)
+        if os.path.isdir(s):
+            matlab_extern = s
+    if not matlab_extern:
+        error('Could not detect architecture to link MATLAB with. Expected one of {} in {}'.format(archs, basepath))
+        sys.exit(1)
+    matlab_link = ["-L" + matlab_extern, "-lMatlabEngine", "-lMatlabDataArray"]
+
+    matlab_defs = []
+
+    makemake_flags += matlab_includes + matlab_link + matlab_defs
+    run_libs = [os.path.join(matlab_extern, 'MatlabEngine')] + run_libs
+    run_libs = [os.path.join(matlab_extern, 'MatlabDataArray')] + run_libs
+
+
+# Start creating files
+if not os.path.isdir('out'):
+    os.mkdir('out')
+
+f = open(os.path.join('out', 'config.py'), 'w')
+f.write('run_libs = %s\n' % repr(run_libs))
+f.write('run_neds = %s\n' % repr(run_neds))
+f.write('run_imgs = %s\n' % repr(run_imgs))
+f.close()
+
+subprocess.check_call(['env', 'opp_makemake'] + makemake_flags, cwd='src')
+
+info('Configure done. You can now run "make".')
